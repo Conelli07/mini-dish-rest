@@ -73,6 +73,76 @@ public class DishRepository {
         }
     }
 
+    public List<Dish> findAllWithFilters(Double priceUnder, Double priceOver, String name) throws SQLException {
+        StringBuilder sql = new StringBuilder(
+                "SELECT id, name, dish_type, selling_price FROM dish WHERE 1=1");
+        List<Object> params = new ArrayList<>();
+        if (priceUnder != null) {
+            sql.append(" AND selling_price < ?");
+            params.add(priceUnder);
+        }
+        if (priceOver != null) {
+            sql.append(" AND selling_price > ?");
+            params.add(priceOver);
+        }
+        if (name != null) {
+            sql.append(" AND name ILIKE ?");
+            params.add("%" + name + "%");
+        }
+        sql.append(" ORDER BY id");
+        List<Dish> dishes = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+            for (int i = 0; i < params.size(); i++) ps.setObject(i + 1, params.get(i));
+            ResultSet rs = ps.executeQuery();
+            while (rs.next()) {
+                Dish dish = mapDish(rs);
+                dish.setDishIngredients(loadDishIngredients(conn, dish.getId()));
+                dishes.add(dish);
+            }
+        }
+        return dishes;
+    }
+
+    public List<Dish> createDishes(List<Dish> dishes) throws SQLException {
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                for (Dish dish : dishes) {
+                    String check = "SELECT 1 FROM dish WHERE LOWER(name) = LOWER(?)";
+                    try (PreparedStatement ps = conn.prepareStatement(check)) {
+                        ps.setString(1, dish.getName());
+                        if (ps.executeQuery().next()) {
+                            conn.rollback();
+                            throw new RuntimeException("Dish.name=" + dish.getName() + " already exists");
+                        }
+                    }
+                }
+                List<Dish> created = new ArrayList<>();
+                for (Dish dish : dishes) {
+                    String insert = "INSERT INTO dish (name, dish_type, selling_price) " +
+                            "VALUES (?, ?::dish_type, ?) RETURNING id";
+                    try (PreparedStatement ps = conn.prepareStatement(insert)) {
+                        ps.setString(1, dish.getName());
+                        ps.setString(2, dish.getDishType().name());
+                        if (dish.getSellingPrice() != null) ps.setDouble(3, dish.getSellingPrice());
+                        else ps.setNull(3, Types.NUMERIC);
+                        ResultSet rs = ps.executeQuery();
+                        if (rs.next()) dish.setId(rs.getInt("id"));
+                        created.add(dish);
+                    }
+                }
+                conn.commit();
+                return created;
+            } catch (Exception e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
     private List<DishIngredient> loadDishIngredients(Connection conn, int dishId) throws SQLException {
         List<DishIngredient> list = new ArrayList<>();
         String sql = "SELECT di.id, di.quantity_required, di.unit, " +

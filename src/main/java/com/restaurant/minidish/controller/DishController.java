@@ -21,11 +21,51 @@ public class DishController {
     @Autowired
     private IngredientRepository ingredientRepository;
 
+    /*@GetMapping("/test500")
+    public void test500() {
+        throw new RuntimeException("Test erreur serveur");
+    }
+    */
+
     @GetMapping
-    public ResponseEntity<?> getAllDishes() {
+    public ResponseEntity<?> getAllDishes(
+            @RequestParam(required = false) Double priceUnder,
+            @RequestParam(required = false) Double priceOver,
+            @RequestParam(required = false) String name) {
         try {
-            List<Dish> dishes = dishRepository.findAll();
+            List<Dish> dishes;
+            if (priceUnder != null || priceOver != null || name != null) {
+                dishes = dishRepository.findAllWithFilters(priceUnder, priceOver, name);
+            } else {
+                dishes = dishRepository.findAll();
+            }
             return ResponseEntity.ok(dishes.stream().map(this::toMap).collect(Collectors.toList()));
+        } catch (SQLException e) {
+            return ResponseEntity.internalServerError().body(e.getMessage());
+        }
+    }
+
+    @PostMapping
+    public ResponseEntity<?> createDishes(@RequestBody(required = false) List<Map<String, Object>> body) {
+        if (body == null || body.isEmpty()) {
+            return ResponseEntity.badRequest().body("Request body must contain at least one dish.");
+        }
+        try {
+            List<Dish> toCreate = new ArrayList<>();
+            for (Map<String, Object> m : body) {
+                Dish dish = new Dish();
+                dish.setName((String) m.get("name"));
+                dish.setDishType(DishTypeEnum.valueOf(((String) m.get("dishType")).toUpperCase()));
+                if (m.get("sellingPrice") != null) {
+                    dish.setSellingPrice(((Number) m.get("sellingPrice")).doubleValue());
+                }
+                toCreate.add(dish);
+            }
+            List<Dish> created = dishRepository.createDishes(toCreate);
+            return ResponseEntity.status(201).body(
+                    created.stream().map(this::toMap).collect(Collectors.toList()));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
         } catch (SQLException e) {
             return ResponseEntity.internalServerError().body(e.getMessage());
         }
